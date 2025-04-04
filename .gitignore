@@ -1,0 +1,9 @@
+.env
+.env copy
+token.json
+creds.json
+__pycache__/google_serv.cpython-311.pyc
+__pycache__/mcp.cpython-311.pyc
+__pycache__/server.cpython-311.pyc
+test.ipynb
+talk2mcp-2.py
