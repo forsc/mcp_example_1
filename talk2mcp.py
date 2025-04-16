@@ -5,6 +5,7 @@ from mcp.client.stdio import stdio_client
 import asyncio
 from google import genai
 import time
+import ast
 from concurrent.futures import TimeoutError
 from functools import partial
 
@@ -19,6 +20,63 @@ max_iterations = 5
 last_response = None
 iteration = 0
 iteration_response = []
+
+output_format = """
+1. For function calls Return in below JSON format ONLY:
+   {
+      "reasoning": "reasoning",
+      "self_correction": "self_correction",
+      "function": "function_name",
+      "parameters": {
+         "param1": "value1",
+         "param2": "value2",
+         "param3": "value3"
+      }
+   }
+   The parameters must match the required input types for the function.
+   if No input is required, use:
+    {
+        "reasoning": "reasoning",
+         "self_correction": "self_correction",
+        "function": "function_name",
+        "parameters": ''
+    }
+
+     Example: For add(a: integer, b: integer), use:
+   {
+      "reasoning": "reasoning",
+       "self_correction": "self_correction",
+      "function": "add",
+      "parameters": {
+         "a": 5,
+         "b": 3
+      }
+   }
+
+2. For final answers, 
+if there is a final output, return in below format:
+    {
+        "reasoning": "...",
+        "self_correction": "...",
+        "answer": "answer"
+    }
+    or 
+    {
+        "reasoning": "...",
+        "self_correction": "...",
+        "answer": "DONE"
+    }
+
+
+
+While using any application, make sure to open the application first before using application specific tools.
+Complete the unrelated tasks first and then move on to the application specific tasks.
+DO NOT PROVIDE INPUTS TO ANY TOOL UNLESS SPECIFIED IN THE QUERY IT SELF. KEEP THE INPUT BLANK
+DO NOT include multiple responses. Give ONE response at a time.
+Make sure to provide parameters in the correct order as specified in the function signature. 
+DO NOT USE ANY OTHER TEXT"""
+
+
 
 async def generate_with_timeout(client, prompt, timeout=10):
     """Generate content with a timeout"""
@@ -109,31 +167,39 @@ async def main():
                 
                 print("Created system prompt...")
                 
-                system_prompt = f"""You are a computer wizard agent solving problems in iterations. You have access to various  tools.
+                system_prompt = f"""You are a methodical computer agent designed to solve problems through a sequence of reasoned steps. You have access to a set of tools to interact with the system or gather information.
 
-Available tools:
+**Your Goal:** Accurately fulfill the user's request by breaking it down into logical steps. At each step, you will first reason about the plan, then potentially use a tool, or provide the final answer.
+
+**Available tools:**
 {tools_description}
 
-Respond with EXACTLY ONE of these formats:
-1. For function calls:
-   FUNCTION_CALL: function_name|param1|param2|...
-   The parameters must match the required input types for the function.
-   
-   Example: For add(a: integer, b: integer), use:
-   FUNCTION_CALL: add|5|3
-   if No input is required, use:
-   FUNCTION_CALL: open_paint|
+**Operational Cycle (Follow these steps in each turn):**
 
-2. For final answers:
-   FINAL_ANSWER: [number] if the output is a number, else ['DONE']
+1.  **Reasoning Step:**
+    *   Analyze the current situation and the user's request.
+    *   Explain your thought process for the *next* action (e.g., "I need to add two numbers," "I need to check if the file exists," "The task is complete").
+    *   If planning a tool call, state its specific purpose (e.g., "Using 'add' tool to calculate the sum").
 
-While using any application, make sure to open the application first before using application specific tools.
-Complete the unrelated tasks first and then move on to the application specific tasks.
-DO NOT PROVIDE INPUTS TO ANY TOOL UNLESS SPECIFIED IN THE QUERY IT SELF. KEEP THE INPUT BLANK
-DO NOT include multiple responses. Give ONE response at a time.
-Make sure to provide parameters in the correct order as specified in the function signature."""
+2.  **Self-Correction/Verification Step:**
+    *   Review your reasoning and the details of your planned action (especially tool parameters). Does it logically follow? Are the parameters correct?
+    *   If you identify an issue, go back to the Reasoning Step to correct it.
 
-                query = """Find the ASCII values of characters in INDIA and then return sum of exponentials of those values, send the answer to rahul.bnghs@gmail.com with subject same as the question'"""
+3.  **Action Step (Choose ONE):**
+    Based on your verified reasoning, select *one* of the following output format 
+    {output_format}
+
+**Mandatory Guidelines:**
+
+*   **Structured Responses:** Strictly adhere to the OUTPUT FORMAT, OUTPUT MUST BE A JSON.
+*   **Step-by-Step Execution:** Process the request iteratively. Wait for the outcome of a function call before proceeding with the next reasoning step.
+*   **Tool Prerequisites:** Ensure any necessary applications are open before using application-specific tools (e.g., call `open_paint` before using paint tools). Address general tasks first.
+*   **Error Handling:** If a tool call fails, returns an error, or provides unexpected results, report this in your next `REASONING:` step and explain your plan to handle it (e.g., retry, use a different tool, ask for clarification).
+*   **Uncertainty:** If you are unsure how to proceed or lack necessary information, state this clearly in the `REASONING:` step and explain what is needed.
+*   **Parameter Order:** Ensure parameters in `FUNCTION_CALL` are in the exact order specified by the tool description.
+"""
+
+                query = """Find the ASCII values of characters in INDIA and then return sum of exponentials of those values, Write the Answer in Paint'"""
                 print("Starting iteration loop...")
                 
                 # Use global iteration variables
@@ -154,16 +220,22 @@ Make sure to provide parameters in the correct order as specified in the functio
                     try:
                         response = await generate_with_timeout(client, prompt)
                         response_text = response.text.strip()
-                        print(f"LLM Response: {response_text}")
+                        start_index = response_text.find('{')
+                        end_index = response_text.rfind('}') 
+                        if start_index != -1 and end_index != -1:
+                            clean_json_string = response_text[start_index : end_index + 1]
+                            response_json = ast.literal_eval(clean_json_string)
+                            print(response_json)
+                        else:
+                            print("Failed to get LLM response: {e}")
+                            break
                     except Exception as e:
-                        print(f"Failed to get LLM response: {e}")
+                        print(f"Error in LLM generation: {e}")
                         break
-                    print(response_text.strip().startswith("FUNCTION_CALL:"))
-                    if response_text.strip().startswith("FUNCTION_CALL:"):
-                        _, function_info = response_text.split(":", 1)
-                        parts = [p.strip() for p in function_info.split("|")]
-                        func_name, params = parts[0], parts[1:]
-                        
+
+                    if response_json.get("function"):
+                        func_name = response_json.get("function")
+                        params = response_json.get("parameters")
                         print(f"Calling function {func_name} with params {params}")
                         try:
                             # Find the matching tool to get its input schema
@@ -176,24 +248,28 @@ Make sure to provide parameters in the correct order as specified in the functio
                             for (param_name, param_info), value in zip(tool.inputSchema['properties'].items(), params):
                                 # Convert the value to the correct type based on the schema
                                 if param_info['type'] == 'integer':
-                                    arguments[param_name] = int(value)
+                                    arguments[param_name] = int(params[param_name])
                                 elif param_info['type'] == 'number':
-                                    arguments[param_name] = float(value)
+                                    arguments[param_name] = float(params[param_name])
                                 elif param_info['type'] == 'array':
                                     # Handle array types if needed
-                                    arguments[param_name] = eval(value)
+                                    arguments[param_name] = params[param_name]
                                 else:
-                                    arguments[param_name] = value
-
+                                    arguments[param_name] = params[param_name]
                             print(f"Executing MCP tool call with arguments: {arguments}")
                             result = await session.call_tool(func_name, arguments=arguments)
                             
                             # Get the full result content
                             if hasattr(result, 'content'):
-                                if isinstance(result.content[0], str):
-                                    iteration_result = result.content[0]
+                                if isinstance(result.content, list):
+                                    iteration_result = []
+                                    for i in result.content:
+                                        if isinstance(i, str):
+                                            iteration_result.append(i)
+                                        else:
+                                            iteration_result.append(i.text)
                                 else:
-                                    iteration_result = result.content[0].text
+                                    iteration_result = result.content
                             else:
                                 iteration_result = str(result)
                                 
