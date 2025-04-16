@@ -16,7 +16,7 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key)
 
-max_iterations = 5
+max_iterations = 8
 last_response = None
 iteration = 0
 iteration_response = []
@@ -179,6 +179,7 @@ async def main():
 1.  **Reasoning Step:**
     *   Analyze the current situation and the user's request.
     *   Explain your thought process for the *next* action (e.g., "I need to add two numbers," "I need to check if the file exists," "The task is complete").
+    *   Mention the type of reasoning you're using (e.g., arithmetic, lookup, logic, planning). eg PLANNING : Reasoning about the plan
     *   If planning a tool call, state its specific purpose (e.g., "Using 'add' tool to calculate the sum").
 
 2.  **Self-Correction/Verification Step:**
@@ -196,7 +197,7 @@ async def main():
 *   **Tool Prerequisites:** Ensure any necessary applications are open before using application-specific tools (e.g., call `open_paint` before using paint tools). Address general tasks first.
 *   **Error Handling:** If a tool call fails, returns an error, or provides unexpected results, report this in your next `REASONING:` step and explain your plan to handle it (e.g., retry, use a different tool, ask for clarification).
 *   **Uncertainty:** If you are unsure how to proceed or lack necessary information, state this clearly in the `REASONING:` step and explain what is needed.
-*   **Parameter Order:** Ensure parameters in `FUNCTION_CALL` are in the exact order specified by the tool description.
+*   **Parameter Order:** Ensure parameters in `function` are in the exact order specified by the tool description.
 """
 
                 query = """Find the ASCII values of characters in INDIA and then return sum of exponentials of those values, Write the Answer in Paint'"""
@@ -286,7 +287,9 @@ async def main():
                             iteration_response.append(f"Error in iteration {iteration + 1}: {str(e)}")
                             break
 
-                    elif response_text.startswith("FINAL_ANSWER:"):
+                    elif response_json.get("answer"):
+                        print(f"Final Reasoning: {response_json}")
+                        print(f"Final answer: {response_json.get('answer')}")
                         print("\n=== Agent Execution Complete ===")
                         break
 
